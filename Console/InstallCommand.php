@@ -43,7 +43,7 @@ class InstallCommand extends Command
 
         $parameters = ['module' => $moduleName];
 
-        $force = $this->option('force') || $this->getLaravel()->environment('production');
+        $force = $this->option('force');
 
         if ($force) {
             $parameters['--force'] = true;
