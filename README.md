@@ -45,12 +45,22 @@ A comprehensive GitHub integration module for FreeScout that enables support tea
    composer install --no-dev
    ```
 
-3. **Run database migrations**:
+3. **Enable the module** (from your FreeScout project root). Skip if already enabled in the UI:
    ```bash
-   php artisan migrate
+   php artisan module:enable Github
    ```
 
-4. **Configure the module** via FreeScout Admin → Settings → GitHub
+4. **Refresh FreeScout caches** so the module command is registered:
+   ```bash
+   php artisan freescout:clear-cache
+   ```
+
+5. **Run the module installation command** to execute this module's migrations:
+   ```bash
+   php artisan freescout-github:install
+   ```
+
+6. **Configure the module** via FreeScout Admin → Settings → GitHub
 
 ## ⚙️ Configuration
 

@@ -3,7 +3,7 @@
 namespace Modules\Github\Providers;
 
 use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\Route;
+use Modules\Github\Console\InstallCommand;
 
 // Module alias
 define('GITHUB_MODULE', 'github');
@@ -23,6 +23,10 @@ class GithubServiceProvider extends ServiceProvider
         $this->loadMigrations();
         $this->registerHooks();
         $this->loadAssets();
+
+        if ($this->app->runningInConsole()) {
+            $this->registerCommands();
+        }
     }
 
     /**
@@ -186,5 +190,17 @@ class GithubServiceProvider extends ServiceProvider
     protected function loadAssets()
     {
         // Assets are loaded via Eventy filters in registerHooks()
+    }
+
+    /**
+     * Register Artisan commands provided by the module.
+     *
+     * @return void
+     */
+    protected function registerCommands()
+    {
+        $this->commands([
+            InstallCommand::class,
+        ]);
     }
 }
