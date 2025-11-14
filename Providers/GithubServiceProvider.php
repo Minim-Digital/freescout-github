@@ -92,14 +92,30 @@ class GithubServiceProvider extends ServiceProvider
     {
         // Add module's CSS file to the application layout
         \Eventy::addFilter('stylesheets', function($styles) {
-            $styles[] = \Module::getPublicPath(GITHUB_MODULE).'/css/module.css';
+            $cssPath = \Module::getPublicPath(GITHUB_MODULE).'/css/module.css';
+            if (file_exists(public_path($cssPath))) {
+                $styles[] = $cssPath;
+            } else {
+                \Log::warning('[GitHub] Public CSS asset not found: '.public_path($cssPath));
+            }
             return $styles;
         });
         
         // Add module's JS file to the application layout
         \Eventy::addFilter('javascripts', function($javascripts) {
-            $javascripts[] = \Module::getPublicPath(GITHUB_MODULE).'/js/laroute.js';
-            $javascripts[] = \Module::getPublicPath(GITHUB_MODULE).'/js/module.js';
+            $jsFiles = [
+                \Module::getPublicPath(GITHUB_MODULE).'/js/laroute.js',
+                \Module::getPublicPath(GITHUB_MODULE).'/js/module.js',
+            ];
+
+            foreach ($jsFiles as $jsPath) {
+                if (file_exists(public_path($jsPath))) {
+                    $javascripts[] = $jsPath;
+                } else {
+                    \Log::warning('[GitHub] Public JS asset not found: '.public_path($jsPath));
+                }
+            }
+
             return $javascripts;
         });
 
