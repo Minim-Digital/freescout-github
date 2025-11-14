@@ -55,12 +55,17 @@ A comprehensive GitHub integration module for FreeScout that enables support tea
    php artisan freescout:clear-cache
    ```
 
-5. **Run the module installation command** to execute this module's migrations:
+5. **Clear application cache** so Laravel registers the Github commands
+   ```bash
+   php artisan cache:clear
+   ```
+
+6. **Run the module installation command** to execute this module's migrations:
    ```bash
    php artisan freescout-github:install
    ```
 
-6. **Configure the module** via FreeScout Admin → Settings → GitHub
+7. **Configure the module** via FreeScout Admin → Settings → GitHub
 
 ## ⚙️ Configuration
 
