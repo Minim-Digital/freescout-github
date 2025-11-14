@@ -9,6 +9,14 @@
             "name": "github.repositories"
         },
         {
+            "uri": "github\/repositories\/search",
+            "name": "github.repositories.search"
+        },
+        {
+            "uri": "github\/repositories\/refresh",
+            "name": "github.repositories.refresh"
+        },
+        {
             "uri": "github\/labels\/{repository}",
             "name": "github.labels"
         },

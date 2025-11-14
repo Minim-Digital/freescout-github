@@ -10,10 +10,124 @@ var GitHub = {
         maxSearchResults: 10
     },
     cache: {
-        repositories: null
+        repositories: null,
+        loading: false,
+        loadingCallbacks: [],
+        repoSearchTimers: {},
+        activeRepoRequests: {},
+        lastThrottleNotice: 0
     },
     warningsShown: [] // Track warnings to prevent duplicates
 };
+
+function githubGetCurrentTokenHash() {
+    try {
+        var $tokenField = $('#github_token');
+        if ($tokenField.length === 0) {
+            return null;
+        }
+
+        var token = $tokenField.val();
+        if (!token) {
+            return null;
+        }
+
+        return window.btoa(token).slice(-8);
+    } catch (e) {
+        return null;
+    }
+}
+
+function githubPersistRepositoryCache(repositories) {
+    if (!Array.isArray(repositories)) {
+        return;
+    }
+
+    try {
+        var cacheData = {
+            repositories: repositories,
+            token_hash: githubGetCurrentTokenHash(),
+            stored_at: Date.now()
+        };
+
+        localStorage.setItem('github_repositories_cache', JSON.stringify(cacheData));
+    } catch (e) {
+        console.warn('GitHub: Failed to persist repository cache', e);
+    }
+}
+
+function githubClearLocalRepositoryCache() {
+    try {
+        localStorage.removeItem('github_repositories_cache');
+    } catch (e) {
+        console.warn('GitHub: Failed to clear repository cache', e);
+    }
+}
+
+function githubEnsureRepositoryCache(callback) {
+    if (typeof callback !== 'function') {
+        callback = null;
+    }
+
+    if (!Array.isArray(GitHub.cache.loadingCallbacks)) {
+        GitHub.cache.loadingCallbacks = [];
+    }
+
+    if (GitHub.cache.repositories && GitHub.cache.repositories.length > 0) {
+        if (callback) {
+            callback(GitHub.cache.repositories);
+        }
+        return;
+    }
+
+    var cachedRepos = githubGetCachedRepositories();
+    if (cachedRepos && cachedRepos.length > 0) {
+        GitHub.cache.repositories = cachedRepos;
+        if (callback) {
+            callback(GitHub.cache.repositories);
+        }
+        return;
+    }
+
+    if (callback) {
+        GitHub.cache.loadingCallbacks.push(callback);
+    }
+
+    if (GitHub.cache.loading) {
+        return;
+    }
+
+    GitHub.cache.loading = true;
+
+    githubLoadRepositories({
+        skipCache: true,
+        onSuccess: function(response) {
+            if (response && Array.isArray(response.repositories)) {
+                GitHub.cache.repositories = response.repositories;
+            }
+        },
+        onComplete: function() {
+            GitHub.cache.loading = false;
+
+            var callbacks = Array.isArray(GitHub.cache.loadingCallbacks) ? GitHub.cache.loadingCallbacks.slice() : [];
+            GitHub.cache.loadingCallbacks = [];
+
+            var repos = GitHub.cache.repositories;
+            if (!repos || repos.length === 0) {
+                repos = githubGetCachedRepositories() || [];
+                if (repos.length > 0) {
+                    GitHub.cache.repositories = repos;
+                }
+            }
+
+            $.each(callbacks, function(_, cb) {
+                if (typeof cb === 'function') {
+                    cb(repos);
+                }
+            });
+        }
+    });
+}
 
 function githubInitSettings() {
     $(document).ready(function() {
@@ -66,6 +180,7 @@ function githubInitSettings() {
                 if (isAjaxSuccess(response)) {
                     githubShowConnectionResult(response);
                     if (response.repositories) {
+                        githubPersistRepositoryCache(response.repositories);
                         githubPopulateRepositories(response.repositories);
                     }
                 } else {
@@ -80,7 +195,7 @@ function githubInitSettings() {
         // Refresh repositories button
         $("#refresh-repositories").click(function(e) {
             e.preventDefault();
-            githubLoadRepositories();
+            githubRefreshRepositoryCache();
         });
 
         // Refresh allowed labels button
@@ -161,26 +276,7 @@ function githubInitModals() {
             if ($(this).parent().get(0) !== document.body) {
                 $(this).detach().appendTo('body');
             }
-            
-            // Only populate repositories if we don't have a default repository
-            // Most users will use the default repository, so avoid unnecessary API calls
-            var defaultRepo = GitHub.defaultRepository;
-            if (defaultRepo) {
-                // Just populate with the default repository to avoid API call
-                githubPopulateRepositories([{full_name: defaultRepo, name: defaultRepo.split('/')[1], has_issues: true}]);
-            } else {
-                // Only load all repositories if no default is set
-                if (GitHub.cache.repositories && GitHub.cache.repositories.length > 0) {
-                    githubPopulateRepositories(GitHub.cache.repositories);
-                } else {
-                    var cachedRepos = githubGetCachedRepositories();
-                    if (cachedRepos) {
-                        githubPopulateRepositories(cachedRepos);
-                    } else {
-                        githubLoadRepositories();
-                    }
-                }
-            }
+
             $('#github-create-issue-form')[0].reset();
             
             // Initialize labels multiselect with Select2
@@ -200,14 +296,22 @@ function githubInitModals() {
             }
             
             // Restore default repository after form reset
-            setTimeout(function() {
-                githubSetDefaultRepository('#github-repository');
-                
-                // Auto-generate content if fields are empty
-                if (!$('#github-issue-title').val() && !$('#github-issue-body').val()) {
-                    githubGenerateIssueContent();
-                }
-            }, 100);
+            githubEnsureRepositoryCache(function() {
+                githubSetupRepositorySelect('#github-repository', '#github-create-issue-modal');
+
+                setTimeout(function() {
+                    if (GitHub.defaultRepository) {
+                        githubSetDefaultRepository('#github-repository');
+                    } else {
+                        $('#github-repository').val(null).trigger('change');
+                    }
+                    
+                    // Auto-generate content if fields are empty
+                    if (!$('#github-issue-title').val() && !$('#github-issue-body').val()) {
+                        githubGenerateIssueContent();
+                    }
+                }, 100);
+            });
         });
 
         // Link issue modal
@@ -216,32 +320,21 @@ function githubInitModals() {
             if ($(this).parent().get(0) !== document.body) {
                 $(this).detach().appendTo('body');
             }
-            
-            // Only populate repositories if we don't have a default repository
-            // Most users will use the default repository, so avoid unnecessary API calls
-            var defaultRepo = GitHub.defaultRepository;
-            if (defaultRepo) {
-                // Just populate with the default repository to avoid API call
-                githubPopulateRepositories([{full_name: defaultRepo, name: defaultRepo.split('/')[1], has_issues: true}]);
-            } else {
-                // Only load all repositories if no default is set
-                if (GitHub.cache.repositories && GitHub.cache.repositories.length > 0) {
-                    githubPopulateRepositories(GitHub.cache.repositories);
-                } else {
-                    var cachedRepos = githubGetCachedRepositories();
-                    if (cachedRepos) {
-                        githubPopulateRepositories(cachedRepos);
-                    } else {
-                        githubLoadRepositories();
-                    }
-                }
-            }
+
             $('#github-link-issue-form')[0].reset();
             $('#github-search-results').hide();
             // Restore default repository after form reset
-            setTimeout(function() {
-                githubSetDefaultRepository('#github-link-repository');
-            }, 10);
+            githubEnsureRepositoryCache(function() {
+                githubSetupRepositorySelect('#github-link-repository', '#github-link-issue-modal');
+
+                setTimeout(function() {
+                    if (GitHub.defaultRepository) {
+                        githubSetDefaultRepository('#github-link-repository');
+                    } else {
+                        $('#github-link-repository').val(null).trigger('change');
+                    }
+                }, 10);
+            });
         });
 
         // Repository change in create modal
@@ -356,61 +449,291 @@ function githubInitModals() {
     });
 }
 
-function githubLoadRepositories() {
+function githubLoadRepositories(options) {
+    options = options || {};
+    var skipCache = options.skipCache || false;
+    var onSuccess = typeof options.onSuccess === 'function' ? options.onSuccess : null;
+    var onComplete = typeof options.onComplete === 'function' ? options.onComplete : null;
     var $loadingDiv = $('#github-repositories-loading');
     var $refreshBtn = $('#refresh-repositories');
-    
-    // Show loading indicator
+
     $loadingDiv.show();
-    $refreshBtn.find('.glyphicon').addClass('glyphicon-spin');
-    
-    fsAjax({}, 
-    laroute.route('github.repositories'), 
-    function(response) {
-        if (isAjaxSuccess(response)) {
-            githubPopulateRepositories(response.repositories);
-            
-            // Cache repositories in localStorage with timestamp
-            var cacheData = {
-                repositories: response.repositories,
-                timestamp: Date.now(),
-                token_hash: $('#github_token').val() ? btoa($('#github_token').val()).slice(-8) : null // Last 8 chars of token for validation
-            };
-            localStorage.setItem('github_repositories_cache', JSON.stringify(cacheData));
-        } else {
-            showFloatingAlert('error', 'Failed to load repositories: ' + (response.message || 'Unknown error'));
+    if ($refreshBtn.length > 0) {
+        $refreshBtn.find('.glyphicon').addClass('glyphicon-spin');
+    }
+
+    if (!skipCache) {
+        var cachedRepos = githubGetCachedRepositories();
+        if (cachedRepos && cachedRepos.length > 0) {
+            githubPopulateRepositories(cachedRepos);
+            $loadingDiv.hide();
+            if ($refreshBtn.length > 0) {
+                $refreshBtn.find('.glyphicon').removeClass('glyphicon-spin');
+            }
+
+            if (onSuccess) {
+                onSuccess({
+                    status: 'success',
+                    source: 'local',
+                    repositories: cachedRepos
+                });
+            }
+
+            GitHub.cache.loading = false;
+
+            if (onComplete) {
+                onComplete();
+            }
+
+            return;
         }
-        $loadingDiv.hide();
-        $refreshBtn.find('.glyphicon').removeClass('glyphicon-spin');
-    }, true, function() {
-        // Error callback
-        $loadingDiv.hide();
-        $refreshBtn.find('.glyphicon').removeClass('glyphicon-spin');
-        showFloatingAlert('error', 'Failed to load repositories');
+    }
+
+    GitHub.cache.loading = true;
+    fsAjax({},
+        laroute.route('github.repositories'),
+        function(response) {
+            if (response.status === 'success' && response.repositories) {
+                githubPersistRepositoryCache(response.repositories);
+                githubPopulateRepositories(response.repositories);
+
+                if (onSuccess) {
+                    onSuccess({
+                        status: 'success',
+                        source: response.source || 'api',
+                        repositories: response.repositories
+                    });
+                }
+            } else if (response.status === 'throttled') {
+                showFloatingAlert('warning', response.message || 'Repository refresh is temporarily throttled. Please try again later.');
+            } else {
+                showFloatingAlert('error', 'Failed to load repositories: ' + (response.message || 'Unknown error'));
+            }
+
+            $loadingDiv.hide();
+            if ($refreshBtn.length > 0) {
+                $refreshBtn.find('.glyphicon').removeClass('glyphicon-spin');
+            }
+
+            GitHub.cache.loading = false;
+
+            if (onComplete) {
+                onComplete();
+            }
+        },
+        true,
+        function() {
+            $loadingDiv.hide();
+            if ($refreshBtn.length > 0) {
+                $refreshBtn.find('.glyphicon').removeClass('glyphicon-spin');
+            }
+            showFloatingAlert('error', 'Failed to load repositories');
+
+            GitHub.cache.loading = false;
+
+            if (onComplete) {
+                onComplete();
+            }
+        }
+    );
+}
+
+function githubRefreshRepositoryCache() {
+    var $loadingDiv = $('#github-repositories-loading');
+    var $refreshBtn = $('#refresh-repositories');
+
+    $loadingDiv.show();
+    if ($refreshBtn.length > 0) {
+        $refreshBtn.find('.glyphicon').addClass('glyphicon-spin');
+    }
+
+    fsAjax({},
+        laroute.route('github.repositories.refresh'),
+        function(response) {
+            githubClearLocalRepositoryCache();
+            GitHub.cache.repositories = null;
+
+            if (response.status !== 'success') {
+                showFloatingAlert('warning', response.message || 'Repository cache cleared.');
+            }
+
+            $loadingDiv.hide();
+            if ($refreshBtn.length > 0) {
+                $refreshBtn.find('.glyphicon').removeClass('glyphicon-spin');
+            }
+
+            githubLoadRepositories({ skipCache: true });
+        },
+        true,
+        function() {
+            $loadingDiv.hide();
+            if ($refreshBtn.length > 0) {
+                $refreshBtn.find('.glyphicon').removeClass('glyphicon-spin');
+            }
+            showFloatingAlert('error', 'Failed to refresh repositories');
+        }
+    );
+}
+
+function githubSetupRepositorySelect(selector, modalSelector) {
+    var $select = $(selector);
+    if ($select.length === 0) {
+        return;
+    }
+
+    if ($select.hasClass('select2-hidden-accessible')) {
+        return;
+    }
+
+    var placeholder = $select.data('placeholder') || Lang.get("messages.select_repository");
+    $select.select2({
+        placeholder: placeholder,
+        allowClear: false,
+        width: '100%',
+        dropdownParent: $(modalSelector),
+        dropdownCssClass: 'github-select2-dropdown',
+        minimumInputLength: 0,
+        ajax: {
+            delay: 0,
+            cache: true,
+            url: laroute.route('github.repositories.search'),
+            dataType: 'json',
+            data: function(params) {
+                return {
+                    q: params.term || '',
+                    limit: GitHub.config.maxSearchResults
+                };
+            },
+            transport: function(params, success, failure) {
+                var requestKey = selector;
+
+                if (!GitHub.cache.repoSearchTimers) {
+                    GitHub.cache.repoSearchTimers = {};
+                }
+                if (!GitHub.cache.activeRepoRequests) {
+                    GitHub.cache.activeRepoRequests = {};
+                }
+
+                if (GitHub.cache.repoSearchTimers[requestKey]) {
+                    clearTimeout(GitHub.cache.repoSearchTimers[requestKey]);
+                }
+
+                var timeoutId = setTimeout(function() {
+                    delete GitHub.cache.repoSearchTimers[requestKey];
+
+                    if (GitHub.cache.activeRepoRequests[requestKey]) {
+                        GitHub.cache.activeRepoRequests[requestKey].abort();
+                    }
+
+                    var jqXHR = $.ajax(params)
+                        .done(function(data) {
+                            success(data);
+                        })
+                        .fail(function(xhr) {
+                            if (xhr && xhr.statusText === 'abort') {
+                                return;
+                            }
+
+                            var response = (xhr && xhr.responseJSON) ? xhr.responseJSON : {};
+                            if (response.status === 'throttled') {
+                                showFloatingAlert('warning', response.message || 'Repository search is temporarily throttled. Please try again later.');
+                            } else {
+                                showFloatingAlert('error', response.message || 'Failed to search repositories.');
+                            }
+                            failure(response);
+                        })
+                        .always(function() {
+                            if (GitHub.cache.activeRepoRequests[requestKey] === jqXHR) {
+                                delete GitHub.cache.activeRepoRequests[requestKey];
+                            }
+                        });
+
+                    GitHub.cache.activeRepoRequests[requestKey] = jqXHR;
+                }, GitHub.config.debounceDelay);
+
+                GitHub.cache.repoSearchTimers[requestKey] = timeoutId;
+
+                return {
+                    abort: function() {
+                        if (GitHub.cache.repoSearchTimers[requestKey]) {
+                            clearTimeout(GitHub.cache.repoSearchTimers[requestKey]);
+                            delete GitHub.cache.repoSearchTimers[requestKey];
+                        }
+
+                        if (GitHub.cache.activeRepoRequests[requestKey]) {
+                            GitHub.cache.activeRepoRequests[requestKey].abort();
+                            delete GitHub.cache.activeRepoRequests[requestKey];
+                        }
+                    }
+                };
+            },
+            processResults: function(data) {
+                if (data.status === 'success' && data.results) {
+                    if (data.meta && data.meta.source === 'api') {
+                        githubClearLocalRepositoryCache();
+                        GitHub.cache.repositories = null;
+                        if (!GitHub.cache.loading) {
+                            githubLoadRepositories({ skipCache: true });
+                        }
+                    }
+
+                    if (data.meta && data.meta.throttled) {
+                        var now = Date.now();
+                        var minInterval = GitHub.config.debounceDelay * 4;
+                        if (!GitHub.cache.lastThrottleNotice || (now - GitHub.cache.lastThrottleNotice) > minInterval) {
+                            var retryAfter = parseInt(data.meta.retry_after, 10);
+                            if (isNaN(retryAfter) || retryAfter < 0) {
+                                retryAfter = 30;
+                            }
+                            showFloatingAlert('info', 'Using cached repositories. You can retry in about ' + retryAfter + 's.');
+                            GitHub.cache.lastThrottleNotice = now;
+                        }
+                    }
+
+                    return {
+                        results: $.map(data.results, function(repo) {
+                            return {
+                                id: repo.id,
+                                text: repo.text || repo.id,
+                                data: repo
+                            };
+                        })
+                    };
+                }
+
+                if (data.status === 'throttled') {
+                    showFloatingAlert('warning', data.message || 'Repository search is temporarily throttled. Please try again later.');
+                }
+
+                return { results: [] };
+            }
+        }
     });
 }
 
-// Check if we have cached repositories
 function githubGetCachedRepositories() {
     try {
         var cached = localStorage.getItem('github_repositories_cache');
         if (!cached) return null;
-        
+
         var cacheData = JSON.parse(cached);
-        var currentTokenHash = $('#github_token').val() ? btoa($('#github_token').val()).slice(-8) : null;
-        
-        // Check if cache is less than 1 hour old and token matches
-        var maxAge = 60 * 60 * 1000; // 1 hour
-        var isValid = (Date.now() - cacheData.timestamp) < maxAge && 
-                     cacheData.token_hash === currentTokenHash &&
-                     cacheData.repositories && cacheData.repositories.length > 0;
-        
-        if (isValid) {
-            return cacheData.repositories;
-        } else {
+
+        if (!cacheData || !Array.isArray(cacheData.repositories)) {
             localStorage.removeItem('github_repositories_cache');
             return null;
         }
+
+        var currentTokenHash = githubGetCurrentTokenHash();
+        if (currentTokenHash && cacheData.token_hash && cacheData.token_hash !== currentTokenHash) {
+            localStorage.removeItem('github_repositories_cache');
+            return null;
+        }
+
+        if (cacheData.repositories.length === 0) {
+            return null;
+        }
+
+        return cacheData.repositories;
     } catch (e) {
         localStorage.removeItem('github_repositories_cache');
         return null;
@@ -424,6 +747,12 @@ function githubSetDefaultRepository(selectId) {
     
     // Check for backend default first
     if (GitHub.defaultRepository && selectId !== '#github_default_repository') {
+        if (select.find('option[value="' + GitHub.defaultRepository + '"]').length === 0) {
+            var option = $('<option></option>')
+                .attr('value', GitHub.defaultRepository)
+                .text(GitHub.defaultRepository);
+            select.append(option);
+        }
         select.val(GitHub.defaultRepository).trigger('change');
         return;
     }
@@ -451,6 +780,8 @@ function githubPopulateRepositories(repositories) {
         
         // Use GitHub.defaultRepository if available and we're not in settings
         var backendDefault = (selectId !== '#github_default_repository' && GitHub.defaultRepository) ? GitHub.defaultRepository : '';
+
+        var usesAjax = select.data('select2Search') === true || select.data('select2Search') === 'true';
         
         // For settings page, preserve any manually entered value
         if (selectId === '#github_default_repository' && currentValue) {
@@ -460,12 +791,29 @@ function githubPopulateRepositories(repositories) {
                     $(this).remove();
                 }
             });
-        } else {
+        } else if (!usesAjax) {
             select.empty().append('<option value="">' + Lang.get("messages.select_repository") + '</option>');
         }
         
         // Determine which value should be selected (priority: current -> backend default -> template default)
         var valueToSelect = currentValue || backendDefault || defaultValue;
+
+        if (usesAjax) {
+            if (valueToSelect && select.find('option[value="' + valueToSelect + '"]').length === 0) {
+                var ajaxOption = $('<option></option>')
+                    .attr('value', valueToSelect)
+                    .text(valueToSelect);
+                select.append(ajaxOption);
+            }
+
+            if (!valueToSelect) {
+                select.val('').trigger('change');
+            } else {
+                select.val(valueToSelect).trigger('change');
+            }
+
+            return;
+        }
         
         // Add repositories that have issues enabled
         var foundRepository = false;
