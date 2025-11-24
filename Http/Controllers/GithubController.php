@@ -423,7 +423,8 @@ class GithubController extends Controller
             'title' => 'nullable|string|max:255',
             'body' => 'nullable|string',
             'labels' => 'nullable|array',
-            'assignees' => 'nullable|array'
+            'assignees' => 'nullable|array',
+            'watchers' => 'nullable|array'
         ]);
 
         $conversation = \App\Conversation::with('customer')->findOrFail($request->get('conversation_id'));
@@ -445,6 +446,7 @@ class GithubController extends Controller
         $body = $request->get('body');
         $labels = $request->get('labels', []) ?: [];
         $assignees = $request->get('assignees', []) ?: [];
+        $watchers = $request->get('watchers', []) ?: [];
 
         try {
             // Check global settings for auto-generation
@@ -487,8 +489,8 @@ class GithubController extends Controller
             // Note: Label assignment is now handled above in the AI content generation
             // to avoid duplicate AI calls. Labels are already assigned from generatedContent['suggested_labels']
 
-            // Create the issue
-            $result = GithubApiClient::createIssue($repository, $title, $body, $labels, $assignees);
+            // Create the issue (pass watchers for @mention auto-subscription)
+            $result = GithubApiClient::createIssue($repository, $title, $body, $labels, $assignees, $watchers);
 
             if ($result['status'] === 'success') {
                 // Link the issue to the conversation
@@ -807,6 +809,34 @@ class GithubController extends Controller
                 'github.allowed_labels',
             ];
             
+            // Handle user mappings separately (with defensive coding)
+            try {
+                $userMappings = $request->input('user_mappings', []);
+                $cleanedMappings = [];
+                
+                if (is_array($userMappings)) {
+                    foreach ($userMappings as $userId => $mapping) {
+                        // Skip if mapping is not an array (defensive)
+                        if (!is_array($mapping)) {
+                            continue;
+                        }
+                        
+                        $githubUsername = isset($mapping['github_username']) ? trim($mapping['github_username']) : '';
+                        if (!empty($githubUsername)) {
+                            $cleanedMappings[$userId] = [
+                                'user_id' => (int) $userId,
+                                'name' => isset($mapping['name']) ? $mapping['name'] : '',
+                                'github_username' => $githubUsername,
+                            ];
+                        }
+                    }
+                }
+                
+                \Option::set('github.user_mappings', json_encode($cleanedMappings));
+            } catch (\Exception $e) {
+                \Helper::log('github_settings', 'Error saving user mappings: ' . $e->getMessage());
+            }
+            
             foreach ($allowed as $key) {
                 try {
                     if (array_key_exists($key, $settings)) {
@@ -939,6 +969,50 @@ class GithubController extends Controller
         }
     }
     
+    /**
+     * Get user mappings for the watchers dropdown
+     * Returns ALL active FreeScout users with their GitHub mappings (if any)
+     */
+    public function getUserMappings()
+    {
+        try {
+            $rawMappings = \Option::get('github.user_mappings', '{}');
+            $userMappings = is_array($rawMappings) ? $rawMappings : (json_decode($rawMappings, true) ?: []);
+            $currentUserId = auth()->id();
+            
+            // Get ALL active FreeScout users and include their GitHub mappings
+            $users = \App\User::where('status', \App\User::STATUS_ACTIVE)->orderBy('first_name')->get();
+            
+            $mappings = [];
+            foreach ($users as $user) {
+                $githubUsername = $userMappings[$user->id]['github_username'] ?? '';
+                
+                // Only include users who have a GitHub username mapped
+                if (!empty($githubUsername)) {
+                    $mappings[] = [
+                        'user_id' => (int) $user->id,
+                        'name' => $user->getFullName(),
+                        'github_username' => $githubUsername,
+                        'is_current_user' => ((int) $user->id === $currentUserId),
+                    ];
+                }
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $mappings,
+                'current_user_id' => $currentUserId,
+            ]);
+        } catch (\Exception $e) {
+            \Helper::logException($e, '[GitHub] Get User Mappings Error');
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to load user mappings: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     /**
      * Test token and show detailed API responses
      */

@@ -157,8 +157,11 @@
                         </div>
                         <div class="col-md-6">
                             <div class="form-group">
-                                <label for="github-issue-assignees">{{ __('Assignees') }}</label>
-                                <input type="text" class="form-control" name="assignees" id="github-issue-assignees" placeholder="{{ __('GitHub usernames (comma-separated)') }}">
+                                <label for="github-issue-watchers">{{ __('Watchers') }}</label>
+                                <select class="form-control" name="watchers[]" id="github-issue-watchers" multiple data-placeholder="{{ __('Select watchers...') }}">
+                                    <!-- Watchers will be populated via JavaScript from user mappings -->
+                                </select>
+                                <p class="help-block small text-muted">{{ __('Selected users will be @mentioned and auto-subscribed to notifications.') }}</p>
                             </div>
                         </div>
                     </div>

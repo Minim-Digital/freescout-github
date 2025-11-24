@@ -257,6 +257,57 @@ JSON format:
             </div>
         </div>
 
+        <!-- User Mapping Section -->
+        <div class="form-group">
+            <label class="col-sm-2 control-label">{{ __('User GitHub Mappings') }}</label>
+            <div class="col-sm-8">
+                <div class="panel panel-default">
+                    <div class="panel-heading">
+                        <h4 class="panel-title">
+                            {{ __('FreeScout User → GitHub Username') }}
+                        </h4>
+                    </div>
+                    <div class="panel-body">
+                        <p class="text-muted small">
+                            {{ __('Map FreeScout users to their GitHub usernames. Users with mappings can be selected as "Watchers" when creating issues - they\'ll be @mentioned and auto-subscribed to notifications.') }}
+                        </p>
+                        <table class="table table-condensed" id="github-user-mappings-table">
+                            <thead>
+                                <tr>
+                                    <th>{{ __('FreeScout User') }}</th>
+                                    <th>{{ __('GitHub Username') }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @php
+                                    $users = \App\User::where('status', \App\User::STATUS_ACTIVE)->orderBy('first_name')->get();
+                                    $rawMappings = \Option::get('github.user_mappings', '{}');
+                                    // Handle both string (JSON) and array (already decoded) cases
+                                    $userMappings = is_array($rawMappings) ? $rawMappings : (json_decode($rawMappings, true) ?: []);
+                                @endphp
+                                @foreach($users as $user)
+                                    <tr>
+                                        <td>
+                                            <strong>{{ $user->getFullName() }}</strong>
+                                            <br><small class="text-muted">{{ $user->email }}</small>
+                                            <input type="hidden" name="user_mappings[{{ $user->id }}][user_id]" value="{{ $user->id }}">
+                                            <input type="hidden" name="user_mappings[{{ $user->id }}][name]" value="{{ $user->getFullName() }}">
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control input-sm" 
+                                                   name="user_mappings[{{ $user->id }}][github_username]" 
+                                                   value="{{ $userMappings[$user->id]['github_username'] ?? '' }}"
+                                                   placeholder="{{ __('e.g., octocat') }}">
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
 
         <div class="form-group">
             <label for="github_allowed_labels" class="col-sm-2 control-label">{{ __('Allowed Auto-assign Labels') }}</label>
