@@ -976,7 +976,8 @@ class GithubController extends Controller
     public function getUserMappings()
     {
         try {
-            $userMappings = json_decode(\Option::get('github.user_mappings', '{}'), true) ?: [];
+            $rawMappings = \Option::get('github.user_mappings', '{}');
+            $userMappings = is_array($rawMappings) ? $rawMappings : (json_decode($rawMappings, true) ?: []);
             $currentUserId = auth()->id();
             
             // Get ALL active FreeScout users and include their GitHub mappings

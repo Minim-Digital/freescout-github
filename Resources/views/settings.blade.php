@@ -281,7 +281,9 @@ JSON format:
                             <tbody>
                                 @php
                                     $users = \App\User::where('status', \App\User::STATUS_ACTIVE)->orderBy('first_name')->get();
-                                    $userMappings = json_decode(\Option::get('github.user_mappings', '{}'), true) ?: [];
+                                    $rawMappings = \Option::get('github.user_mappings', '{}');
+                                    // Handle both string (JSON) and array (already decoded) cases
+                                    $userMappings = is_array($rawMappings) ? $rawMappings : (json_decode($rawMappings, true) ?: []);
                                 @endphp
                                 @foreach($users as $user)
                                     <tr>
