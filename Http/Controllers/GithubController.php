@@ -809,21 +809,32 @@ class GithubController extends Controller
                 'github.allowed_labels',
             ];
             
-            // Handle user mappings separately
-            $userMappings = $request->input('user_mappings', []);
-            if (is_array($userMappings)) {
+            // Handle user mappings separately (with defensive coding)
+            try {
+                $userMappings = $request->input('user_mappings', []);
                 $cleanedMappings = [];
-                foreach ($userMappings as $userId => $mapping) {
-                    $githubUsername = trim($mapping['github_username'] ?? '');
-                    if (!empty($githubUsername)) {
-                        $cleanedMappings[$userId] = [
-                            'user_id' => (int) $userId,
-                            'name' => $mapping['name'] ?? '',
-                            'github_username' => $githubUsername,
-                        ];
+                
+                if (is_array($userMappings)) {
+                    foreach ($userMappings as $userId => $mapping) {
+                        // Skip if mapping is not an array (defensive)
+                        if (!is_array($mapping)) {
+                            continue;
+                        }
+                        
+                        $githubUsername = isset($mapping['github_username']) ? trim($mapping['github_username']) : '';
+                        if (!empty($githubUsername)) {
+                            $cleanedMappings[$userId] = [
+                                'user_id' => (int) $userId,
+                                'name' => isset($mapping['name']) ? $mapping['name'] : '',
+                                'github_username' => $githubUsername,
+                            ];
+                        }
                     }
                 }
+                
                 \Option::set('github.user_mappings', json_encode($cleanedMappings));
+            } catch (\Exception $e) {
+                \Helper::log('github_settings', 'Error saving user mappings: ' . $e->getMessage());
             }
             
             foreach ($allowed as $key) {
@@ -960,6 +971,7 @@ class GithubController extends Controller
     
     /**
      * Get user mappings for the watchers dropdown
+     * Returns ALL active FreeScout users with their GitHub mappings (if any)
      */
     public function getUserMappings()
     {
@@ -967,15 +979,20 @@ class GithubController extends Controller
             $userMappings = json_decode(\Option::get('github.user_mappings', '{}'), true) ?: [];
             $currentUserId = auth()->id();
             
-            // Format for dropdown
+            // Get ALL active FreeScout users and include their GitHub mappings
+            $users = \App\User::where('status', \App\User::STATUS_ACTIVE)->orderBy('first_name')->get();
+            
             $mappings = [];
-            foreach ($userMappings as $userId => $mapping) {
-                if (!empty($mapping['github_username'])) {
+            foreach ($users as $user) {
+                $githubUsername = $userMappings[$user->id]['github_username'] ?? '';
+                
+                // Only include users who have a GitHub username mapped
+                if (!empty($githubUsername)) {
                     $mappings[] = [
-                        'user_id' => (int) $userId,
-                        'name' => $mapping['name'] ?? '',
-                        'github_username' => $mapping['github_username'],
-                        'is_current_user' => ((int) $userId === $currentUserId),
+                        'user_id' => (int) $user->id,
+                        'name' => $user->getFullName(),
+                        'github_username' => $githubUsername,
+                        'is_current_user' => ((int) $user->id === $currentUserId),
                     ];
                 }
             }
@@ -990,7 +1007,7 @@ class GithubController extends Controller
             
             return response()->json([
                 'status' => 'error',
-                'message' => 'Failed to load user mappings'
+                'message' => 'Failed to load user mappings: ' . $e->getMessage()
             ], 500);
         }
     }

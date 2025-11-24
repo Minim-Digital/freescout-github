@@ -166,11 +166,6 @@
                         </div>
                     </div>
                     
-                    <div class="form-group">
-                        <label for="github-issue-assignees">{{ __('Assignees') }}</label>
-                        <input type="text" class="form-control" name="assignees" id="github-issue-assignees" placeholder="{{ __('GitHub usernames (comma-separated)') }}">
-                    </div>
-                    
                 </form>
             </div>
             <div class="modal-footer">
