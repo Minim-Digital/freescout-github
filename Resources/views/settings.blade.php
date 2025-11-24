@@ -257,6 +257,17 @@ JSON format:
             </div>
         </div>
 
+        <div class="form-group{{ $errors->has('github.default_watcher') ? ' has-error' : '' }}">
+            <label for="github_default_watcher" class="col-sm-2 control-label">{{ __('Default GitHub Watcher') }}</label>
+            <div class="col-sm-6">
+                <input type="text" class="form-control" name="settings[github.default_watcher]" id="github_default_watcher" value="{{ old('settings.github.default_watcher', \Option::get('github.default_watcher')) }}" placeholder="{{ __('e.g., jack-arturo') }}">
+                @include('partials/field_error', ['field'=>'github.default_watcher'])
+                <p class="form-help">
+                    {{ __('GitHub username to @mention when creating issues. This user will be automatically subscribed to receive notifications (e.g., from CodeRabbit, CI).') }}
+                </p>
+            </div>
+        </div>
+
 
         <div class="form-group">
             <label for="github_allowed_labels" class="col-sm-2 control-label">{{ __('Allowed Auto-assign Labels') }}</label>

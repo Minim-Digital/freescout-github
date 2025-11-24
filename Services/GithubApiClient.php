@@ -524,7 +524,8 @@ class GithubApiClient
             
             // Create remote link back to FreeScout if enabled
             if (\Option::get('github.create_remote_link', true)) {
-                self::createRemoteLink($repository, $response['data']['number']);
+                $watcher = \Option::get('github.default_watcher');
+                self::createRemoteLink($repository, $response['data']['number'], $watcher);
             }
 
             return [
@@ -554,13 +555,25 @@ class GithubApiClient
 
     /**
      * Create remote link in GitHub issue pointing back to FreeScout
+     * 
+     * @param string $repository Repository full name (owner/repo)
+     * @param int $issue_number Issue number
+     * @param string|null $watcher_username GitHub username to @mention (auto-subscribes them)
      */
-    private static function createRemoteLink($repository, $issue_number)
+    private static function createRemoteLink($repository, $issue_number, $watcher_username = null)
     {
         // This would require additional GitHub API calls or webhook setup
         // For now, we'll add a comment to the issue with the FreeScout link
         $freescout_url = url('/');
-        $comment_body = "🔗 **FreeScout Link**: This issue was created from FreeScout support system.\n\n" .
+        
+        // @mention the watcher to auto-subscribe them to the issue
+        // Being @mentioned in an issue automatically subscribes you to notifications
+        $mention = '';
+        if (!empty($watcher_username)) {
+            $mention = "@{$watcher_username} ";
+        }
+        
+        $comment_body = "{$mention}🔗 **FreeScout Link**: This issue was created from FreeScout support system.\n\n" .
                        "View original conversation: {$freescout_url}";
 
         self::apiCall("repos/{$repository}/issues/{$issue_number}/comments", [
