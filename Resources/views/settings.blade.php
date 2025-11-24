@@ -257,14 +257,52 @@ JSON format:
             </div>
         </div>
 
-        <div class="form-group{{ $errors->has('github.default_watcher') ? ' has-error' : '' }}">
-            <label for="github_default_watcher" class="col-sm-2 control-label">{{ __('Default GitHub Watcher') }}</label>
-            <div class="col-sm-6">
-                <input type="text" class="form-control" name="settings[github.default_watcher]" id="github_default_watcher" value="{{ old('settings.github.default_watcher', \Option::get('github.default_watcher')) }}" placeholder="{{ __('e.g., jack-arturo') }}">
-                @include('partials/field_error', ['field'=>'github.default_watcher'])
-                <p class="form-help">
-                    {{ __('GitHub username to @mention when creating issues. This user will be automatically subscribed to receive notifications (e.g., from CodeRabbit, CI).') }}
-                </p>
+        <!-- User Mapping Section -->
+        <div class="form-group">
+            <label class="col-sm-2 control-label">{{ __('User GitHub Mappings') }}</label>
+            <div class="col-sm-8">
+                <div class="panel panel-default">
+                    <div class="panel-heading">
+                        <h4 class="panel-title">
+                            {{ __('FreeScout User → GitHub Username') }}
+                        </h4>
+                    </div>
+                    <div class="panel-body">
+                        <p class="text-muted small">
+                            {{ __('Map FreeScout users to their GitHub usernames. Users with mappings can be selected as "Watchers" when creating issues - they\'ll be @mentioned and auto-subscribed to notifications.') }}
+                        </p>
+                        <table class="table table-condensed" id="github-user-mappings-table">
+                            <thead>
+                                <tr>
+                                    <th>{{ __('FreeScout User') }}</th>
+                                    <th>{{ __('GitHub Username') }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @php
+                                    $users = \App\User::where('status', \App\User::STATUS_ACTIVE)->orderBy('first_name')->get();
+                                    $userMappings = json_decode(\Option::get('github.user_mappings', '{}'), true) ?: [];
+                                @endphp
+                                @foreach($users as $user)
+                                    <tr>
+                                        <td>
+                                            <strong>{{ $user->getFullName() }}</strong>
+                                            <br><small class="text-muted">{{ $user->email }}</small>
+                                            <input type="hidden" name="user_mappings[{{ $user->id }}][user_id]" value="{{ $user->id }}">
+                                            <input type="hidden" name="user_mappings[{{ $user->id }}][name]" value="{{ $user->getFullName() }}">
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control input-sm" 
+                                                   name="user_mappings[{{ $user->id }}][github_username]" 
+                                                   value="{{ $userMappings[$user->id]['github_username'] ?? '' }}"
+                                                   placeholder="{{ __('e.g., octocat') }}">
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
 

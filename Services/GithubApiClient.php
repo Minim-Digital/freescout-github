@@ -500,8 +500,15 @@ class GithubApiClient
 
     /**
      * Create new issue
+     * 
+     * @param string $repository Repository full name (owner/repo)
+     * @param string $title Issue title
+     * @param string $body Issue body
+     * @param array $labels Labels to assign
+     * @param array $assignees GitHub usernames to assign
+     * @param array $watchers GitHub usernames to @mention (auto-subscribes them)
      */
-    public static function createIssue($repository, $title, $body = '', $labels = [], $assignees = [])
+    public static function createIssue($repository, $title, $body = '', $labels = [], $assignees = [], $watchers = [])
     {
         $params = [
             'title' => $title,
@@ -524,8 +531,7 @@ class GithubApiClient
             
             // Create remote link back to FreeScout if enabled
             if (\Option::get('github.create_remote_link', true)) {
-                $watcher = \Option::get('github.default_watcher');
-                self::createRemoteLink($repository, $response['data']['number'], $watcher);
+                self::createRemoteLink($repository, $response['data']['number'], $watchers);
             }
 
             return [
@@ -558,22 +564,28 @@ class GithubApiClient
      * 
      * @param string $repository Repository full name (owner/repo)
      * @param int $issue_number Issue number
-     * @param string|null $watcher_username GitHub username to @mention (auto-subscribes them)
+     * @param array $watchers GitHub usernames to @mention (auto-subscribes them)
      */
-    private static function createRemoteLink($repository, $issue_number, $watcher_username = null)
+    private static function createRemoteLink($repository, $issue_number, $watchers = [])
     {
         // This would require additional GitHub API calls or webhook setup
         // For now, we'll add a comment to the issue with the FreeScout link
         $freescout_url = url('/');
         
-        // @mention the watcher to auto-subscribe them to the issue
+        // @mention watchers to auto-subscribe them to the issue
         // Being @mentioned in an issue automatically subscribes you to notifications
-        $mention = '';
-        if (!empty($watcher_username)) {
-            $mention = "@{$watcher_username} ";
+        $mentions = '';
+        if (!empty($watchers) && is_array($watchers)) {
+            $mentionList = array_map(function($username) {
+                return '@' . trim($username);
+            }, array_filter($watchers));
+            
+            if (!empty($mentionList)) {
+                $mentions = implode(' ', $mentionList) . ' ';
+            }
         }
         
-        $comment_body = "{$mention}🔗 **FreeScout Link**: This issue was created from FreeScout support system.\n\n" .
+        $comment_body = "{$mentions}🔗 **FreeScout Link**: This issue was created from FreeScout support system.\n\n" .
                        "View original conversation: {$freescout_url}";
 
         self::apiCall("repos/{$repository}/issues/{$issue_number}/comments", [

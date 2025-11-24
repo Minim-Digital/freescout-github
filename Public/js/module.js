@@ -15,7 +15,9 @@ var GitHub = {
         loadingCallbacks: [],
         repoSearchTimers: {},
         activeRepoRequests: {},
-        lastThrottleNotice: 0
+        lastThrottleNotice: 0,
+        userMappings: null,
+        userMappingsLoading: false
     },
     warningsShown: [], // Track warnings to prevent duplicates
     state: {
@@ -313,6 +315,24 @@ function githubInitModals() {
                 // Clear selection after form reset
                 labelsSelect.val(null).trigger('change');
             }
+            
+            // Initialize watchers multiselect with Select2 and load user mappings
+            var watchersSelect = $('#github-issue-watchers');
+            if (!watchersSelect.hasClass('select2-hidden-accessible')) {
+                watchersSelect.select2({
+                    placeholder: 'Select watchers...',
+                    allowClear: true,
+                    closeOnSelect: false,
+                    width: '100%',
+                    dropdownParent: $('#github-create-issue-modal'),
+                    dropdownCssClass: 'github-select2-dropdown'
+                });
+            }
+            
+            // Load user mappings and populate watchers dropdown
+            githubLoadUserMappings(function(mappings) {
+                githubPopulateWatchersDropdown(watchersSelect, mappings);
+            });
             
             // Restore default repository after form reset
             githubEnsureRepositoryCache(function() {
@@ -1088,6 +1108,103 @@ function githubPopulateLabels(labels) {
         }
     });
     
+}
+
+/**
+ * Load user mappings from server for watchers dropdown
+ */
+function githubLoadUserMappings(callback) {
+    // Return cached mappings if available
+    if (GitHub.cache.userMappings !== null) {
+        if (typeof callback === 'function') {
+            callback(GitHub.cache.userMappings);
+        }
+        return;
+    }
+    
+    // Prevent duplicate requests
+    if (GitHub.cache.userMappingsLoading) {
+        return;
+    }
+    
+    GitHub.cache.userMappingsLoading = true;
+    
+    $.ajax({
+        url: laroute.route('github.user_mappings'),
+        type: 'GET',
+        success: function(response) {
+            GitHub.cache.userMappingsLoading = false;
+            
+            if (response.status === 'success') {
+                GitHub.cache.userMappings = response.data || [];
+                if (typeof callback === 'function') {
+                    callback(GitHub.cache.userMappings);
+                }
+            } else {
+                console.error('Failed to load user mappings:', response.message);
+                GitHub.cache.userMappings = [];
+                if (typeof callback === 'function') {
+                    callback([]);
+                }
+            }
+        },
+        error: function(xhr) {
+            GitHub.cache.userMappingsLoading = false;
+            console.error('Failed to load user mappings:', xhr);
+            GitHub.cache.userMappings = [];
+            if (typeof callback === 'function') {
+                callback([]);
+            }
+        }
+    });
+}
+
+/**
+ * Populate watchers dropdown with user mappings
+ * Defaults to selecting the current user if they have a mapping
+ */
+function githubPopulateWatchersDropdown(select, mappings) {
+    if (!select || !select.length) {
+        return;
+    }
+    
+    // Destroy existing Select2 if it exists
+    if (select.hasClass('select2-hidden-accessible')) {
+        select.select2('destroy');
+    }
+    
+    select.empty();
+    
+    var currentUserValue = null;
+    
+    $.each(mappings, function(i, mapping) {
+        var option = $('<option></option>')
+            .attr('value', mapping.github_username)
+            .attr('data-user-id', mapping.user_id)
+            .text(mapping.name + ' (@' + mapping.github_username + ')');
+        
+        select.append(option);
+        
+        // Track current user for default selection
+        if (mapping.is_current_user) {
+            currentUserValue = mapping.github_username;
+        }
+    });
+    
+    // Re-initialize Select2
+    select.select2({
+        placeholder: 'Select watchers...',
+        allowClear: true,
+        closeOnSelect: false,
+        width: '100%',
+        dropdownParent: $('#github-create-issue-modal'),
+        dropdownCssClass: 'github-select2-dropdown'
+    });
+    
+    // Default to selecting current user if they have a mapping
+    if (currentUserValue) {
+        select.val([currentUserValue]).trigger('change');
+    }
 }
 
 function githubLoadLabelMappings(repository) {

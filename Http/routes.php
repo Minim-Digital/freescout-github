@@ -31,6 +31,9 @@ Route::group([
     Route::get('/github/label-mappings', 'GithubController@getLabelMappings')->name('github.label_mappings');
     Route::post('/github/label-mappings', 'GithubController@saveLabelMappings')->name('github.save_label_mappings');
     
+    // User mapping routes (for watchers dropdown)
+    Route::get('/github/user-mappings', 'GithubController@getUserMappings')->name('github.user_mappings');
+    
 });
 
 // Public webhook route (no middleware - external access required)

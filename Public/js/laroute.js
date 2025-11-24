@@ -61,6 +61,10 @@
             "name": "github.save_label_mappings"
         },
         {
+            "uri": "github\/user-mappings",
+            "name": "github.user_mappings"
+        },
+        {
             "uri": "github\/save-settings",
             "name": "github.save_settings"
         },
