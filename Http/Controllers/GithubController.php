@@ -674,16 +674,39 @@ class GithubController extends Controller
     {
         $request->validate([
             'repository' => 'required|string',
-            'mappings' => 'required|array',
-            'mappings.*.freescout_tag' => 'required|string',
-            'mappings.*.github_label' => 'required|string',
+            'mappings' => 'nullable|array',
+            'mappings.*.freescout_tag' => 'required_with:mappings|string',
+            'mappings.*.github_label' => 'required_with:mappings|string',
             'mappings.*.confidence_threshold' => 'nullable|numeric|min:0|max:1'
         ]);
 
         $repository = $request->get('repository');
-        $mappings = $request->get('mappings');
+        $mappings = collect($request->get('mappings', []))
+            ->map(function ($mapping) {
+                return [
+                    'freescout_tag' => trim($mapping['freescout_tag'] ?? ''),
+                    'github_label' => trim($mapping['github_label'] ?? ''),
+                    'confidence_threshold' => isset($mapping['confidence_threshold'])
+                        ? (float) $mapping['confidence_threshold']
+                        : 0.80,
+                ];
+            })
+            ->filter(function ($mapping) {
+                return !empty($mapping['freescout_tag']) && !empty($mapping['github_label']);
+            })
+            ->values();
 
         try {
+            $activeTags = $mappings->pluck('freescout_tag')->unique()->all();
+
+            if (empty($activeTags)) {
+                GithubLabelMapping::where('repository', $repository)->delete();
+            } else {
+                GithubLabelMapping::where('repository', $repository)
+                    ->whereNotIn('freescout_tag', $activeTags)
+                    ->delete();
+            }
+
             foreach ($mappings as $mapping) {
                 GithubLabelMapping::createOrUpdateMapping(
                     $mapping['freescout_tag'],
@@ -695,7 +718,8 @@ class GithubController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'message' => 'Label mappings saved successfully'
+                'message' => 'Label mappings saved successfully',
+                'data' => GithubLabelMapping::getRepositoryMappings($repository)
             ]);
 
         } catch (\Exception $e) {

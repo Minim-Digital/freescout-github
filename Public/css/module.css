@@ -385,6 +385,22 @@
     flex-shrink: 0;
 }
 
+.label-mapping-row.has-error input {
+    border-color: #d9534f;
+}
+
+.label-mapping-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+}
+
+#label-mapping-status {
+    min-height: 18px;
+}
+
 /* Connection status styles */
 .github-connection-status {
     display: flex;

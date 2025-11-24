@@ -292,12 +292,18 @@ JSON format:
                         </h4>
                     </div>
                     <div class="panel-body">
-                        <div id="label-mappings-container">
+                        <div id="label-mappings-container" class="label-mappings-container">
                             <p class="text-muted">{{ __('Select a repository to configure label mappings') }}</p>
                         </div>
-                        <button type="button" class="btn btn-default btn-sm" id="add-label-mapping">
-                            <i class="glyphicon glyphicon-plus"></i> {{ __('Add Mapping') }}
-                        </button>
+                        <div class="label-mapping-actions">
+                            <button type="button" class="btn btn-default btn-sm" id="add-label-mapping">
+                                <i class="glyphicon glyphicon-plus"></i> {{ __('Add Mapping') }}
+                            </button>
+                            <button type="button" class="btn btn-primary btn-sm" id="save-label-mappings" disabled>
+                                <i class="glyphicon glyphicon-floppy-disk"></i> {{ __('Save Mappings') }}
+                            </button>
+                            <span id="label-mapping-status" class="text-muted small" aria-live="polite"></span>
+                        </div>
                     </div>
                 </div>
             </div>
