@@ -10,9 +10,42 @@ use Modules\Github\Services\LabelAssignmentService;
 use Modules\Github\Entities\GithubIssue;
 use Modules\Github\Entities\GithubLabelMapping;
 use App\Conversation;
+use Modules\Github\Support\RepositoryCache;
 
 class GithubController extends Controller
 {
+    /**
+     * Normalize request values to boolean for older Laravel versions.
+     *
+     * @param  mixed  $value
+     * @param  bool   $default
+     * @return bool
+     */
+    private function toBoolean($value, bool $default = false): bool
+    {
+        if (is_null($value)) {
+            return $default;
+        }
+
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if (is_string($value)) {
+            $value = strtolower(trim($value));
+            if ($value === '') {
+                return $default;
+            }
+            return in_array($value, ['1', 'true', 'on', 'yes'], true);
+        }
+
+        if (is_numeric($value)) {
+            return (int) $value === 1;
+        }
+
+        return $default;
+    }
+
     /**
      * Test GitHub connection
      */
@@ -56,31 +89,122 @@ class GithubController extends Controller
     public function getRepositories(Request $request)
     {
         try {
-            $result = GithubApiClient::getRepositories();
-            
-            \Helper::log('github_debug', 'Repository fetch result: ' . json_encode([
-                'status' => $result['status'],
-                'data_count' => isset($result['data']) ? count($result['data']) : 'no data',
-                'message' => $result['message'] ?? 'no message'
-            ]));
-            
+            if ($this->toBoolean($request->input('refresh'))) {
+                RepositoryCache::clear();
+            }
+
+            $result = RepositoryCache::getRepositories(true);
+
             if ($result['status'] === 'success') {
                 return response()->json([
                     'status' => 'success',
-                    'repositories' => $result['data']
-                ]);
-            } else {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => $result['message']
+                    'repositories' => $result['repositories'],
+                    'source' => $result['source'] ?? 'cache',
+                    'fetched_at' => $result['fetched_at'] ?? null,
                 ]);
             }
+
+            if ($result['status'] === 'throttled') {
+                return response()->json([
+                    'status' => 'throttled',
+                    'message' => $result['message'],
+                    'retry_after' => $result['retry_after'] ?? 60,
+                ], 429);
+            }
+
+            return response()->json([
+                'status' => 'error',
+                'message' => $result['message'] ?? 'Failed to load repositories',
+            ], 400);
         } catch (\Exception $e) {
             \Helper::logException($e, '[GitHub] Get Repositories Error');
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to fetch repositories: ' . $e->getMessage()
             ]);
+        }
+    }
+
+    /**
+     * Refresh repository cache.
+     */
+    public function refreshRepositories(): \Illuminate\Http\JsonResponse
+    {
+        try {
+            RepositoryCache::clear();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Repository cache cleared.',
+            ]);
+        } catch (\Exception $e) {
+            \Helper::logException($e, '[GitHub] Refresh Repositories Error');
+
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to clear repository cache.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Search repositories with cache + throttled API fallback.
+     */
+    public function searchRepositories(Request $request): \Illuminate\Http\JsonResponse
+    {
+        try {
+            $query = (string) $request->input('q', $request->input('term', ''));
+            $limit = (int) $request->input('limit', 20);
+
+            $result = RepositoryCache::search($query, $limit);
+
+            if ($result['status'] === 'success') {
+                $repositories = $result['repositories'];
+
+                $formatted = array_map(function ($repo) {
+                    return [
+                        'id' => $repo['full_name'],
+                        'text' => $repo['full_name'],
+                        'name' => $repo['name'] ?? $repo['full_name'],
+                        'private' => $repo['private'] ?? false,
+                        'has_issues' => $repo['has_issues'] ?? true,
+                    ];
+                }, $repositories);
+
+                return response()->json([
+                    'status' => 'success',
+                    'results' => $formatted,
+                    'meta' => [
+                        'count' => count($formatted),
+                        'source' => $result['source'] ?? 'cache',
+                        'fetched_at' => $result['fetched_at'] ?? null,
+                        'throttled' => $result['throttled'] ?? false,
+                        'retry_after' => $result['retry_after'] ?? null,
+                    ],
+                ]);
+            }
+
+            if ($result['status'] === 'throttled') {
+                return response()->json([
+                    'status' => 'throttled',
+                    'message' => $result['message'],
+                    'retry_after' => $result['retry_after'] ?? 60,
+                ], 429);
+            }
+
+            $message = $result['message'] ?? 'Failed to search repositories.';
+
+            return response()->json([
+                'status' => 'error',
+                'message' => $message,
+            ], 400);
+        } catch (\Exception $e) {
+            \Helper::logException($e, '[GitHub] Search Repositories Error');
+
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to search repositories: ' . $e->getMessage(),
+            ], 500);
         }
     }
 
@@ -550,16 +674,39 @@ class GithubController extends Controller
     {
         $request->validate([
             'repository' => 'required|string',
-            'mappings' => 'required|array',
-            'mappings.*.freescout_tag' => 'required|string',
-            'mappings.*.github_label' => 'required|string',
+            'mappings' => 'nullable|array',
+            'mappings.*.freescout_tag' => 'required_with:mappings|string',
+            'mappings.*.github_label' => 'required_with:mappings|string',
             'mappings.*.confidence_threshold' => 'nullable|numeric|min:0|max:1'
         ]);
 
         $repository = $request->get('repository');
-        $mappings = $request->get('mappings');
+        $mappings = collect($request->get('mappings', []))
+            ->map(function ($mapping) {
+                return [
+                    'freescout_tag' => trim($mapping['freescout_tag'] ?? ''),
+                    'github_label' => trim($mapping['github_label'] ?? ''),
+                    'confidence_threshold' => isset($mapping['confidence_threshold'])
+                        ? (float) $mapping['confidence_threshold']
+                        : 0.80,
+                ];
+            })
+            ->filter(function ($mapping) {
+                return !empty($mapping['freescout_tag']) && !empty($mapping['github_label']);
+            })
+            ->values();
 
         try {
+            $activeTags = $mappings->pluck('freescout_tag')->unique()->all();
+
+            if (empty($activeTags)) {
+                GithubLabelMapping::where('repository', $repository)->delete();
+            } else {
+                GithubLabelMapping::where('repository', $repository)
+                    ->whereNotIn('freescout_tag', $activeTags)
+                    ->delete();
+            }
+
             foreach ($mappings as $mapping) {
                 GithubLabelMapping::createOrUpdateMapping(
                     $mapping['freescout_tag'],
@@ -571,7 +718,8 @@ class GithubController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'message' => 'Label mappings saved successfully'
+                'message' => 'Label mappings saved successfully',
+                'data' => GithubLabelMapping::getRepositoryMappings($repository)
             ]);
 
         } catch (\Exception $e) {

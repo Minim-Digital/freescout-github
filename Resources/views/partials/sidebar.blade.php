@@ -118,8 +118,8 @@
                     
                     <div class="form-group">
                         <label for="github-repository">{{ __('Repository') }}</label>
-                        <select class="form-control" name="repository" id="github-repository" required>
-                            <option value="">Select Repository</option>
+                        <select class="form-control" name="repository" id="github-repository" required data-select2-search="true" data-placeholder="{{ __('Select Repository') }}">
+                            <option value="">{{ __('Select Repository') }}</option>
                             @php
                                 $defaultRepo = \Option::get('github.default_repository');
                             @endphp
@@ -195,8 +195,8 @@
                     
                     <div class="form-group">
                         <label for="github-link-repository">{{ __('Repository') }}</label>
-                        <select class="form-control" name="repository" id="github-link-repository" required>
-                            <option value="">Select Repository</option>
+                        <select class="form-control" name="repository" id="github-link-repository" required data-select2-search="true" data-placeholder="{{ __('Select Repository') }}">
+                            <option value="">{{ __('Select Repository') }}</option>
                             @php
                                 $defaultRepo = \Option::get('github.default_repository');
                             @endphp

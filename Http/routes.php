@@ -22,6 +22,8 @@ Route::group([
     // Settings routes
     Route::post('/github/test-connection', 'GithubController@testConnection')->name('github.test_connection');
     Route::post('/github/repositories', 'GithubController@getRepositories')->name('github.repositories');
+    Route::get('/github/repositories/search', 'GithubController@searchRepositories')->name('github.repositories.search');
+    Route::post('/github/repositories/refresh', 'GithubController@refreshRepositories')->name('github.repositories.refresh');
     Route::get('/github/labels/{repository}', 'GithubController@getLabels')->name('github.labels')->where('repository', '.*');
     Route::post('/github/save-settings', 'GithubController@saveSettings')->name('github.save_settings');
     

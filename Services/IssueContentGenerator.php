@@ -3,6 +3,7 @@
 namespace Modules\Github\Services;
 
 use App\Conversation;
+use Illuminate\Support\Str;
 
 class IssueContentGenerator
 {
@@ -983,47 +984,138 @@ JSON format:
     }
 
     /**
-     * Extract diagnostic information using AI analysis
+     * Extract diagnostic information without relying on an external AI call.
      */
     private function extractDiagnosticInfo($conversationText)
     {
-        
-        $diagnosticInfo = "Analyze this support conversation (provided as structured JSON) and extract diagnostic information.
+        $info = [
+            'reproduction_confirmed' => false,
+            'root_cause' => null,
+            'issue_type' => null,
+            'symptoms' => [],
+            'conflicting_plugins' => [],
+            'technical_details' => [],
+            'reproduction_steps' => [],
+            'support_analysis' => [],
+            'customer_environment' => [],
+        ];
 
-Conversation Data:
-$conversationText
+        $structured = $this->decodeConversationJson($conversationText);
+        $messages = $structured['messages'] ?? [];
 
-Extract the following diagnostic information if present:
-1. reproduction_confirmed: true/false - did support team confirm they reproduced the issue?
-2. root_cause: string - any identified root cause or technical analysis
-3. issue_type: string - type of issue (CSS, JavaScript, plugin conflict, etc.)
-4. symptoms: array - specific symptoms or behaviors described
-5. conflicting_plugins: array - any plugins mentioned as causing conflicts
-6. technical_details: array - versions, error messages, browser info, etc.
-7. reproduction_steps: array - any steps mentioned to reproduce the issue
-8. support_analysis: array - key findings or analysis from support team
-9. customer_environment: object - customer's setup details (WordPress version, plugins, etc.)
+        foreach ($messages as $message) {
+            $body = (string) ($message['message'] ?? '');
+            if ($body === '') {
+                continue;
+            }
 
-Pay special attention to:
-- Internal notes from support team (sender_type: \"Support Team (Internal Note)\")
-- Support team messages confirming reproduction
-- Technical analysis and root cause identification
-- Plugin conflicts and compatibility issues
+            $lowerBody = strtolower($body);
 
-Only include fields that have actual information. Return valid JSON only.
+            if (!$info['reproduction_confirmed'] && preg_match('/reproduc(ed|e|ing)|able to replicate|able to reproduce/i', $body)) {
+                $info['reproduction_confirmed'] = true;
+            }
 
-Example response:
-{
-  \"reproduction_confirmed\": true,
-  \"root_cause\": \"CSS issue with checkbox styling caused by plugin conflict\",
-  \"issue_type\": \"CSS conflict\",
-  \"symptoms\": [\"checkboxes become unclickable when WP Fusion is activated\"],
-  \"conflicting_plugins\": [\"User Menus plugin\", \"WP Fusion\"],
-  \"support_analysis\": [\"Issue appears after User Menu update\", \"Working fine few months ago\", \"Inspected elements and confirmed CSS issue\"],
-  \"customer_environment\": {\"troubleshooting_method\": \"Health Check plugin used to isolate conflict\"}
-}";
+            if ($info['root_cause'] === null && (strpos($lowerBody, 'root cause') !== false || strpos($lowerBody, 'because') !== false)) {
+                $info['root_cause'] = Str::limit($body, 280);
+            }
 
-        return $diagnosticInfo;
+            if ($info['issue_type'] === null) {
+                $info['issue_type'] = $this->detectIssueType($lowerBody);
+            }
+
+            if (preg_match_all('/error:? (.+?)(?:\.|\n|$)/i', $body, $errorMatches)) {
+                foreach ($errorMatches[1] as $error) {
+                    $info['symptoms'][] = trim($error);
+                }
+            }
+
+            if (preg_match_all('/([A-Z][A-Za-z0-9\s]+)\s+plugin/i', $body, $pluginMatches)) {
+                foreach ($pluginMatches[1] as $plugin) {
+                    $info['conflicting_plugins'][] = trim($plugin);
+                }
+            }
+
+            if (preg_match_all('/step\s*\d*[:\-]\s*(.+)/i', $body, $stepMatches)) {
+                foreach ($stepMatches[1] as $step) {
+                    $info['reproduction_steps'][] = trim($step);
+                }
+            }
+
+            $sender = strtolower($message['sender_type'] ?? '');
+            if (strpos($sender, 'support') !== false) {
+                $info['support_analysis'][] = Str::limit($body, 200);
+            }
+        }
+
+        $this->populateEnvironmentDetails($conversationText, $info);
+        $this->populateTechnicalDetails($conversationText, $info);
+
+        $info['symptoms'] = array_values(array_unique(array_filter($info['symptoms'])));
+        $info['conflicting_plugins'] = array_values(array_unique(array_filter($info['conflicting_plugins'])));
+        $info['reproduction_steps'] = array_values(array_unique(array_filter($info['reproduction_steps'])));
+        $info['support_analysis'] = array_values(array_unique(array_filter($info['support_analysis'])));
+
+        return $info;
+    }
+
+    private function decodeConversationJson(string $conversationText): ?array
+    {
+        if (preg_match('/```json\s*(.*?)\s*```/is', $conversationText, $matches)) {
+            $json = trim($matches[1]);
+            $decoded = json_decode($json, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        return null;
+    }
+
+    private function detectIssueType(string $lowerBody): ?string
+    {
+        $map = [
+            'CSS' => ['css', 'stylesheet', 'style'],
+            'JavaScript' => ['javascript', 'js error', 'console', 'script'],
+            'Performance' => ['slow', 'performance', 'timeout'],
+            'API' => ['api', 'webhook', 'endpoint'],
+            'Database' => ['database', 'sql', 'query'],
+        ];
+
+        foreach ($map as $type => $keywords) {
+            foreach ($keywords as $keyword) {
+                if (strpos($lowerBody, $keyword) !== false) {
+                    return $type;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function populateEnvironmentDetails(string $conversationText, array &$info): void
+    {
+        if (preg_match('/WordPress\s+([0-9\.]+)/i', $conversationText, $match)) {
+            $info['customer_environment']['wordpress_version'] = $match[1];
+        }
+
+        if (preg_match('/WooCommerce\s+([0-9\.]+)/i', $conversationText, $match)) {
+            $info['customer_environment']['woocommerce_version'] = $match[1];
+        }
+
+        if (preg_match('/PHP\s+([0-9\.]+)/i', $conversationText, $match)) {
+            $info['customer_environment']['php_version'] = $match[1];
+        }
+    }
+
+    private function populateTechnicalDetails(string $conversationText, array &$info): void
+    {
+        if (preg_match_all('/(Fatal error|Warning|Notice):\s*(.+?)(?:\.|\n)/i', $conversationText, $matches)) {
+            foreach ($matches[0] as $detail) {
+                $info['technical_details'][] = trim($detail);
+            }
+        }
+
+        $info['technical_details'] = array_values(array_unique(array_filter($info['technical_details'])));
     }
 
     /**
