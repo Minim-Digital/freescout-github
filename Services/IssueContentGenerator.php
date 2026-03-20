@@ -450,10 +450,22 @@ class IssueContentGenerator
                 throw new \Exception('Failed to generate content: Claude returned empty content (stop_reason: ' . $stopReason . ')');
             }
 
+            // Claude sometimes wraps JSON in markdown code blocks or adds text around it
             $content = json_decode($contentString, true);
             if (json_last_error() !== JSON_ERROR_NONE) {
-                \Helper::log('github_ai', 'ERROR: Invalid JSON content from Claude - ' . json_last_error_msg() . ' - Raw: ' . substr($contentString, 0, 200));
-                throw new \Exception('Failed to generate content: Claude response was not valid JSON');
+                // Try to extract JSON from markdown code blocks
+                if (preg_match('/```(?:json)?\s*([\s\S]*?)\s*```/', $contentString, $jsonMatch)) {
+                    $content = json_decode(trim($jsonMatch[1]), true);
+                }
+                // Try to extract JSON object directly from surrounding text
+                if (json_last_error() !== JSON_ERROR_NONE && preg_match('/\{[\s\S]*"title"[\s\S]*"body"[\s\S]*\}/', $contentString, $jsonMatch)) {
+                    $content = json_decode(trim($jsonMatch[0]), true);
+                }
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    \Helper::log('github_ai', 'ERROR: Invalid JSON content from Claude - ' . json_last_error_msg() . ' - Raw: ' . substr($contentString, 0, 500));
+                    throw new \Exception('Failed to generate content: Claude response was not valid JSON');
+                }
+                \Helper::log('github_ai', 'Extracted JSON from Claude response (was wrapped in text/markdown)');
             }
 
             if ($content && isset($content['title'], $content['body'])) {
