@@ -365,11 +365,13 @@ class IssueContentGenerator
     private function generateWithClaude(Conversation $conversation, $apiKey, $availableLabels = [])
     {
         $conversationText = $this->extractConversationText($conversation);
-        
+
         $prompt = $this->buildPrompt($conversationText, $conversation, $availableLabels);
 
-        // Determine SSL settings based on environment  
-        $isLocalDev = in_array(config('app.env'), ['local', 'dev', 'development']) || 
+        \Helper::log('github_ai', 'Claude request prepared: ' . strlen($prompt) . ' chars, ' . count($availableLabels) . ' labels');
+
+        // Determine SSL settings based on environment
+        $isLocalDev = in_array(config('app.env'), ['local', 'dev', 'development']) ||
                       strpos(config('app.url'), '.local') !== false ||
                       strpos(config('app.url'), 'localhost') !== false;
 
@@ -388,8 +390,8 @@ class IssueContentGenerator
             ],
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => \Helper::jsonEncodeSafe([
-                'model' => 'claude-3-haiku-20240307',
-                'max_tokens' => 1000,
+                'model' => 'claude-haiku-4-5-20251001',
+                'max_tokens' => 1500,
                 'messages' => [
                     [
                         'role' => 'user',
@@ -401,24 +403,76 @@ class IssueContentGenerator
 
         $response = curl_exec($curl);
         $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        $error = curl_error($curl);
         curl_close($curl);
 
-        if ($httpCode === 200) {
-            $data = json_decode($response, true);
-            if (isset($data['content'][0]['text'])) {
-                $content = json_decode($data['content'][0]['text'], true);
-                if ($content && isset($content['title'], $content['body'])) {
-                    // Filter suggested labels based on allowed labels setting
-                    $content = $this->filterSuggestedLabels($content);
-                    
-                    // Post-process to inject conversation JSON
-                    return $this->injectConversationContext($content, $conversation);
-                }
+        // Handle connection/curl errors
+        if ($httpCode === 0) {
+            $errorMessage = 'Claude API connection failed';
+            if ($error) {
+                $errorMessage .= ': ' . $error;
             }
+            \Helper::log('github_ai', 'ERROR: ' . $errorMessage);
+            throw new \Exception('Failed to generate content: ' . $errorMessage);
         }
 
-        // Fallback if API call fails
-        return $this->generateManualContent($conversation);
+        // Handle API errors
+        if ($httpCode !== 200) {
+            $errorMessage = 'Claude API Error: HTTP ' . $httpCode;
+            if ($response) {
+                $errorData = json_decode($response, true);
+                if ($errorData && isset($errorData['error']['message'])) {
+                    $errorMessage .= ' - ' . $errorData['error']['message'];
+                }
+            }
+            \Helper::log('github_ai', 'ERROR: ' . $errorMessage);
+            throw new \Exception('Failed to generate content: ' . $errorMessage);
+        }
+
+        $data = json_decode($response, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            \Helper::log('github_ai', 'ERROR: Invalid JSON response from Claude - ' . json_last_error_msg());
+            throw new \Exception('Failed to generate content: Invalid JSON response from Claude API');
+        }
+
+        // Log token usage
+        if (isset($data['usage'])) {
+            $usage = $data['usage'];
+            \Helper::log('github_ai', 'Claude response: ' . ($usage['input_tokens'] ?? 0) . ' input + ' . ($usage['output_tokens'] ?? 0) . ' output tokens');
+        }
+
+        if (isset($data['content'][0]['text'])) {
+            $contentString = $data['content'][0]['text'];
+
+            if (empty($contentString)) {
+                $stopReason = $data['stop_reason'] ?? 'unknown';
+                \Helper::log('github_ai', 'ERROR: Empty content from Claude, stop_reason: ' . $stopReason);
+                throw new \Exception('Failed to generate content: Claude returned empty content (stop_reason: ' . $stopReason . ')');
+            }
+
+            $content = json_decode($contentString, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                \Helper::log('github_ai', 'ERROR: Invalid JSON content from Claude - ' . json_last_error_msg() . ' - Raw: ' . substr($contentString, 0, 200));
+                throw new \Exception('Failed to generate content: Claude response was not valid JSON');
+            }
+
+            if ($content && isset($content['title'], $content['body'])) {
+                $labelCount = isset($content['suggested_labels']) ? count($content['suggested_labels']) : 0;
+                \Helper::log('github_ai', 'SUCCESS: Generated title (' . strlen($content['title']) . ' chars), body (' . strlen($content['body']) . ' chars), ' . $labelCount . ' labels');
+
+                // Filter suggested labels based on allowed labels setting
+                $content = $this->filterSuggestedLabels($content);
+
+                // Post-process to inject conversation JSON
+                return $this->injectConversationContext($content, $conversation);
+            }
+
+            \Helper::log('github_ai', 'ERROR: Claude response missing required title/body fields');
+            throw new \Exception('Failed to generate content: Claude response missing required title or body fields');
+        }
+
+        \Helper::log('github_ai', 'ERROR: Claude response missing content field');
+        throw new \Exception('Failed to generate content: Claude response missing content field');
     }
 
     /**
