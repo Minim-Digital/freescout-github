@@ -489,6 +489,14 @@ class GithubController extends Controller
             // Note: Label assignment is now handled above in the AI content generation
             // to avoid duplicate AI calls. Labels are already assigned from generatedContent['suggested_labels']
 
+            // Merge default labels (always applied to every issue)
+            $defaultLabelsStr = \Option::get('github.default_labels', '');
+            if (!empty($defaultLabelsStr)) {
+                $defaultLabels = array_map('trim', explode(',', $defaultLabelsStr));
+                $defaultLabels = array_filter($defaultLabels);
+                $labels = array_values(array_unique(array_merge($labels, $defaultLabels)));
+            }
+
             // Create the issue (pass watchers for @mention auto-subscription)
             $result = GithubApiClient::createIssue($repository, $title, $body, $labels, $assignees, $watchers);
 
@@ -807,6 +815,7 @@ class GithubController extends Controller
                 'github.manual_template',
                 'github.create_remote_link',
                 'github.allowed_labels',
+                'github.default_labels',
             ];
             
             // Handle user mappings separately (with defensive coding)

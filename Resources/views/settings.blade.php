@@ -310,6 +310,17 @@ JSON format:
 
 
         <div class="form-group">
+            <label for="github_default_labels" class="col-sm-2 control-label">{{ __('Default Labels') }}</label>
+            <div class="col-sm-6">
+                <input type="text" class="form-control" name="settings[github.default_labels]" id="github_default_labels" value="{{ old('settings.github.default_labels', \Option::get('github.default_labels', '')) }}" placeholder="{{ __('e.g., place, support') }}">
+                @include('partials/field_error', ['field'=>'github.default_labels'])
+                <p class="form-help">
+                    {{ __('Comma-separated list of labels to automatically add to every new GitHub issue. These are added regardless of AI suggestions.') }}
+                </p>
+            </div>
+        </div>
+
+        <div class="form-group">
             <label for="github_allowed_labels" class="col-sm-2 control-label">{{ __('Allowed Auto-assign Labels') }}</label>
             <div class="col-sm-6">
                 <!-- Hidden field to pass current allowed labels to JavaScript -->
